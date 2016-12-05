@@ -1,5 +1,5 @@
 CFLAGS := $(CFLAGS) -O0 -g -DDEBUG -Wall
-LDFLAGS := $(LDFLAGS)
+LDFLAGS := $(LDFLAGS) -lpthread
 
 all: a2dp-alsa libsbc.a a2dp-buffer
 

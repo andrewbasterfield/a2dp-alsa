@@ -153,10 +153,6 @@ int get_system_bus(DBusConnection **system_bus) {
  * @returns TRUE if successful, FALSE otherwise
  ********************/
 int get_bluetooth_object(DBusConnection* conn, char *device, char **dev_path) {
-	DBusMessage *msg, *reply;
-	DBusMessageIter iter;
-	DBusError err;
-	char *s, *method = FIND_ADAPTER;
 
 	// org.bluez.Manager has been removed; just use hci0
 	*dev_path = strdup ("/org/bluez/hci0");
@@ -282,9 +278,7 @@ int media_register_endpoint(DBusConnection* conn, char *bt_object, char *endpoin
  ********************/
 int transport_acquire (DBusConnection *conn, char *transport_path, int *fd, int *read_mtu, int *write_mtu) {
 	DBusMessage *msg, *reply;
-	DBusMessageIter iter;
 	DBusError err;
-	char *access_type = ACCESS_TYPE;
 	
 	debug_print ("acquire %s\n", transport_path);
 	dbus_error_init(&err);	
@@ -330,9 +324,7 @@ int transport_acquire (DBusConnection *conn, char *transport_path, int *fd, int 
  ********************/
 int transport_release (DBusConnection *conn, char *transport_path) {
 	DBusMessage *msg, *reply;
-	DBusMessageIter iter;
 	DBusError err;
-	char *access_type = ACCESS_TYPE;
 	
 	debug_print ("release %s\n", transport_path);
 	dbus_error_init(&err);	
@@ -792,7 +784,7 @@ void audiosource_property_changed (DBusConnection *conn, DBusMessage *msg, int w
 	char *state;
 	io_thread_tcb_s *head = *io_threads_table;
 	io_thread_tcb_s *io_data;
-	int new_state, transition, when_to_acquire, when_to_release;
+	int new_state, transition;
 	
 	dbus_message_iter_init (msg, &iter);
     dbus_message_iter_get_basic (&iter, &key);

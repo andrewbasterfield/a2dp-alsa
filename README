@@ -1,5 +1,5 @@
 Author: James Budiono
-Copyright (C) James Budiono 2013
+Copyright (C) James Budiono 2013, 2015
 License: GNU GPL Version 3 or later.
 =========
 
@@ -14,7 +14,7 @@ Externals:
 a2dp-codecs.h is from bluez 4.101
 ipc.h is from bluez 4.101
 rtp.h is from bluez 4.101
-sbc.* is from bluez 4.101
+sbc/* is from sbc 1.3
 uthash.h is from http://troydhanson.github.io/uthash/
 What else you need to compile: dbus, and of course bluez bluetoothd to run it.
 
@@ -39,40 +39,59 @@ To tell a2dp-alsa as a sink (device streams audio to computer running a2dp):
 
 To tell a2dp-alsa as a source (streams audio from computer to bluetooth speaker)
 - remove "Socket" under "Enable" under [General]
-- run "audio-source --source | a2dp-alsa --source" where audio-source is a program that will produce raw audio data on stdout,
+- run "audio-source | a2dp-alsa --source" where audio-source is a program that will produce raw audio data on stdout,
   example: "mpg321 --stdout xxx.mp3", or "ffmpeg -i xxx.mp3 -", etc.
 - connect your bluetooth speaker, e.g:
   dbus-send --system --dest=org.bluez /org/bluez/[bluetoothd-pid]/hci/dev_XX_XX_XX_XX_XX_XX org.bluez.AudioSink.Connect
   (where XX_XX_XX_XX_XX_XX is the device's bluetooth address).
 
 Two mode of operation for "source":
-1. Running as --run-once will tell a2dp-alsa to quit as soon as stdin is exhausted, it only has effects with --source.
+1. Running as --source will tell a2dp-alsa to quit as soon as stdin is exhausted.
 This is probably what you want if you use it inside asoundrc (bearing in mind that 
-as soon as a2dp-alsa quits, the bluetooth connection is terminated and you will have to re-connect again next time).
+as soon as a2dp-alsa quits, the bluetooth connection is terminated and you will have to 
+re-connect the BT speaker again next time). 
 This has the effect of running a2dp-alsa "on-demand".
 ffmpeg works with this, VLC stutters, youtube crash.
 
+What to put in .asoundrc:
 ---
 pcm.a2dp {
-	type file
-	slave.pcm "null"
-	file "| a2dp-alsa --source --run-once"
+	type rate
+	slave {
+		pcm {
+			type file
+			slave.pcm "null"
+			file "| /mnt/sda5/holding/projects/a2dp-alsa/a2dp-alsa --source"
+		}
+		rate 44100
+	}
 }
 ---
 
 2. Or you can run a permanent "a2dp server". Useful if you want to run this together with --sink too.
 First, make a fifo (say mkfifo /tmp/a2dp.fifo), 
-then "a2dp-buffer /tmp/a2dp.fifo | a2dp-alsa --source" 
-Use this asoundrc.
+then "a2dp-alsa --source=/tmp/a2dp.fifo" 
+(or, alternatively, "a2dp-buffer /tmp/a2dp.fifo | a2dp-alsa --source" - this is the older way
+of doing it, still works).
 Run this way, ffmpeg (still) works, VLC works (output to file, set to the fifo), youtube still crash.
+
+Use this asoundrc:
 ---
 pcm.a2dpfifo {
-	type file
-	slave.pcm "null"
-	file "/tmp/a2dp.fifo"
+	type rate
+	slave {
+		pcm {
+			type file
+			slave.pcm "null"
+			file "/tmp/a2dp.fifo"		
+		}
+		rate 44100
+	}
 }
 ---
 
+Obsolete utility: a2dp-buffer
+=============================
 There is a small utility a2dp-buffer whose job is is to read a pipe and put what
 it has read to stdout. If the pipe is closed, it will re-open again, forever.
 It also tries to buffer the content.
@@ -81,6 +100,10 @@ With a2dp-buffer it is possible to run a2dp-alsa as a "A2DP soundserver" accepti
 providing sink and source at the same time, like this:
 "a2dp-buffer /tmp/a2dp.fifo | a2dp-alsa --source --sink | aplay -f cd" 
 (after you have made the fifo). Use the second asoundrc above for settings.
+
+Note: a2dp-buffer is obsolete. a2dp-alsa now is capable of doing the buffering
+itself, and it can re-open the fifo itself. Just run it like this:
+"a2dp-alsa --source=/tmp/a2dp.fifo --sink | aplay -f cd"
 
 How it works
 ============
@@ -136,6 +159,7 @@ TODO:
 1. It can act as sink and/or source.
    But using it both as sink/source at the same time, somehow causes output
    streaming (from computer to bluetooth speaker) to stutter - need to investigate.
+   (This was true in 2013 with N900, no longer true in 2015 tested with Android).
    
 2. Minimal error checking (purpose is to show how it works).
 
@@ -144,9 +168,7 @@ TODO:
    (bt phone --> (sink) computer (source) --> bt speaker) by piping
    sink's output to source's fifo, like this:
    
-   "a2dp-buffer /tmp/a2dp.fifo | a2dp-alsa --source --sink | aplay -f cd -D a2dpfifo"
-   
-   but because of problem no. 1 above, streaming is not very smooth.
+   "a2dp-alsa --source=/tmp/a2dp.fifo --sink | aplay -f cd -D a2dpfifo"
    
 4. Now only works on bluez 4.x (4.101 tested), may need to refactor to work on bluez 5.
    The biggest stud: the org.bluez.AudioSource / org.bluez.AudioSink signals are gone so 
@@ -155,7 +177,7 @@ TODO:
 What can be improved:
 - check why running both input and output causes output to stutter.
 - handle device changes - auto-detect new devices and auto-shutdown on removal.
-- merge a2dp-buffer with bt_write
+- merge a2dp-buffer with bt_write (DONE)
 - make an alsa-library driver for it (like pcm_bluetooth, which is removed in bluez 5),
   instead of the kludge with alsa 'file' plugin as above.
 - make it bluez 5 capable. Note that at this time of writing, June 2013, bluez has been 

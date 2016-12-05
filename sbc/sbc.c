@@ -25,14 +25,6 @@
  *
  */
 
-/* todo items:
-
-  use a log2 table for byte integer scale factors calculation (sum log2 results
-  for high and low bytes) fill bitpool by 16 bits instead of one at a time in
-  bits allocation/bitpool generation port to the dsp
-
-*/
-
 #ifdef HAVE_CONFIG_H
 #include <config.h>
 #endif
@@ -57,6 +49,55 @@
 #define MSBC_SYNCWORD	0xAD
 #define MSBC_BLOCKS	15
 
+#define A2DP_SAMPLING_FREQ_16000		(1 << 3)
+#define A2DP_SAMPLING_FREQ_32000		(1 << 2)
+#define A2DP_SAMPLING_FREQ_44100		(1 << 1)
+#define A2DP_SAMPLING_FREQ_48000		(1 << 0)
+
+#define A2DP_CHANNEL_MODE_MONO			(1 << 3)
+#define A2DP_CHANNEL_MODE_DUAL_CHANNEL		(1 << 2)
+#define A2DP_CHANNEL_MODE_STEREO		(1 << 1)
+#define A2DP_CHANNEL_MODE_JOINT_STEREO		(1 << 0)
+
+#define A2DP_BLOCK_LENGTH_4			(1 << 3)
+#define A2DP_BLOCK_LENGTH_8			(1 << 2)
+#define A2DP_BLOCK_LENGTH_12			(1 << 1)
+#define A2DP_BLOCK_LENGTH_16			(1 << 0)
+
+#define A2DP_SUBBANDS_4				(1 << 1)
+#define A2DP_SUBBANDS_8				(1 << 0)
+
+#define A2DP_ALLOCATION_SNR			(1 << 1)
+#define A2DP_ALLOCATION_LOUDNESS		(1 << 0)
+
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+
+struct a2dp_sbc {
+	uint8_t channel_mode:4;
+	uint8_t frequency:4;
+	uint8_t allocation_method:2;
+	uint8_t subbands:2;
+	uint8_t block_length:4;
+	uint8_t min_bitpool;
+	uint8_t max_bitpool;
+} __attribute__ ((packed));
+
+#elif __BYTE_ORDER == __BIG_ENDIAN
+
+struct a2dp_sbc {
+	uint8_t frequency:4;
+	uint8_t channel_mode:4;
+	uint8_t block_length:4;
+	uint8_t subbands:2;
+	uint8_t allocation_method:2;
+	uint8_t min_bitpool;
+	uint8_t max_bitpool;
+} __attribute__ ((packed));
+
+#else
+#error "Unknown byte order"
+#endif
+
 /* This structure contains an unpacked SBC frame.
    Yes, there is probably quite some unused space herein */
 struct sbc_frame {
@@ -78,7 +119,7 @@ struct sbc_frame {
 	uint8_t subbands;
 	uint8_t bitpool;
 	uint16_t codesize;
-	uint8_t length;
+	uint16_t length;
 
 	/* bit number x set means joint stereo has been used in subband x */
 	uint8_t joint;
@@ -954,7 +995,7 @@ static void sbc_encoder_init(bool msbc, struct sbc_encoder_state *state,
 }
 
 struct sbc_priv {
-	int init;
+	bool init;
 	bool msbc;
 	struct SBC_ALIGNED sbc_frame frame;
 	struct SBC_ALIGNED sbc_decoder_state dec_state;
@@ -1046,6 +1087,122 @@ SBC_EXPORT int sbc_init_msbc(sbc_t *sbc, unsigned long flags)
 	return 0;
 }
 
+static int sbc_set_a2dp(sbc_t *sbc, unsigned long flags,
+					const void *conf, size_t conf_len)
+{
+	const struct a2dp_sbc *a2dp;
+
+	if (conf_len != sizeof(*a2dp))
+		return -EINVAL;
+
+	a2dp = conf;
+
+	switch (a2dp->frequency) {
+	case A2DP_SAMPLING_FREQ_16000:
+		sbc->frequency = SBC_FREQ_16000;
+		break;
+	case A2DP_SAMPLING_FREQ_32000:
+		sbc->frequency = SBC_FREQ_32000;
+		break;
+	case A2DP_SAMPLING_FREQ_44100:
+		sbc->frequency = SBC_FREQ_44100;
+		break;
+	case A2DP_SAMPLING_FREQ_48000:
+		sbc->frequency = SBC_FREQ_48000;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	switch (a2dp->channel_mode) {
+	case A2DP_CHANNEL_MODE_MONO:
+		sbc->mode = SBC_MODE_MONO;
+		break;
+	case A2DP_CHANNEL_MODE_DUAL_CHANNEL:
+		sbc->mode = SBC_MODE_DUAL_CHANNEL;
+		break;
+	case A2DP_CHANNEL_MODE_STEREO:
+		sbc->mode = SBC_MODE_STEREO;
+		break;
+	case A2DP_CHANNEL_MODE_JOINT_STEREO:
+		sbc->mode = SBC_MODE_JOINT_STEREO;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	switch (a2dp->allocation_method) {
+	case A2DP_ALLOCATION_SNR:
+		sbc->allocation = SBC_AM_SNR;
+		break;
+	case A2DP_ALLOCATION_LOUDNESS:
+		sbc->allocation = SBC_AM_LOUDNESS;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	switch (a2dp->subbands) {
+	case A2DP_SUBBANDS_4:
+		sbc->subbands = SBC_SB_4;
+		break;
+	case A2DP_SUBBANDS_8:
+		sbc->subbands = SBC_SB_8;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	switch (a2dp->block_length) {
+	case A2DP_BLOCK_LENGTH_4:
+		sbc->blocks = SBC_BLK_4;
+		break;
+	case A2DP_BLOCK_LENGTH_8:
+		sbc->blocks = SBC_BLK_8;
+		break;
+	case A2DP_BLOCK_LENGTH_12:
+		sbc->blocks = SBC_BLK_12;
+		break;
+	case A2DP_BLOCK_LENGTH_16:
+		sbc->blocks = SBC_BLK_16;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+SBC_EXPORT int sbc_init_a2dp(sbc_t *sbc, unsigned long flags,
+					const void *conf, size_t conf_len)
+{
+	int err;
+
+	err = sbc_init(sbc, flags);
+	if (err < 0)
+		return err;
+
+	err = sbc_set_a2dp(sbc, flags, conf, conf_len);
+	if (err < 0) {
+		sbc_finish(sbc);
+		return err;
+	}
+
+	return 0;
+}
+
+int sbc_reinit_a2dp(sbc_t *sbc, unsigned long flags,
+					const void *conf, size_t conf_len)
+{
+	int err;
+
+	err = sbc_reinit(sbc, flags);
+	if (err < 0)
+		return err;
+
+	return sbc_set_a2dp(sbc, flags, conf, conf_len);
+}
+
 SBC_EXPORT ssize_t sbc_parse(sbc_t *sbc, const void *input, size_t input_len)
 {
 	return sbc_decode(sbc, input, input_len, NULL, 0, NULL);
@@ -1067,7 +1224,7 @@ SBC_EXPORT ssize_t sbc_decode(sbc_t *sbc, const void *input, size_t input_len,
 
 	if (!priv->init) {
 		sbc_decoder_init(&priv->dec_state, &priv->frame);
-		priv->init = 1;
+		priv->init = true;
 
 		sbc->frequency = priv->frame.frequency;
 		sbc->mode = priv->frame.mode;
@@ -1155,7 +1312,7 @@ SBC_EXPORT ssize_t sbc_encode(sbc_t *sbc, const void *input, size_t input_len,
 		priv->frame.length = sbc_get_frame_length(sbc);
 
 		sbc_encoder_init(priv->msbc, &priv->enc_state, &priv->frame);
-		priv->init = 1;
+		priv->init = true;
 	} else if (priv->frame.bitpool != sbc->bitpool) {
 		priv->frame.length = sbc_get_frame_length(sbc);
 		priv->frame.bitpool = sbc->bitpool;
@@ -1245,7 +1402,7 @@ SBC_EXPORT size_t sbc_get_frame_length(sbc_t *sbc)
 
 	ret = 4 + (4 * subbands * channels) / 8;
 	/* This term is not always evenly divide so we round it up */
-	if (channels == 1)
+	if (channels == 1 || sbc->mode == SBC_MODE_DUAL_CHANNEL)
 		ret += ((blocks * channels * bitpool) + 7) / 8;
 	else
 		ret += (((joint ? subbands : 0) + blocks * bitpool) + 7) / 8;
@@ -1339,7 +1496,7 @@ SBC_EXPORT int sbc_reinit(sbc_t *sbc, unsigned long flags)
 
 	priv = sbc->priv;
 
-	if (priv->init == 1)
+	if (priv->init)
 		memset(sbc->priv, 0, sizeof(struct sbc_priv));
 
 	sbc_set_defaults(sbc, flags);

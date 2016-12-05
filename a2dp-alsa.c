@@ -6,9 +6,10 @@
  * 
  * For bluez 4.x.
  * 
- * Copyright (C) James Budiono 2013
+ * Copyright (C) James Budiono 2013, 2015, 2016
  * License: GNU GPL Version 3 or later
  * Version 1: June 2013
+ * Version 2: Jan 2016
  ****************************************/
 // std includes
 #include <unistd.h>
@@ -101,7 +102,8 @@ int transport_release (DBusConnection *conn, char *transport_path);
 
 // globals
 int quit=0;       // when set to 1, program terminates
-int run_once = 0; // only run output once, then exit
+int preferred_frequency = BT_SBC_SAMPLING_FREQ_44100; // what is the frequency to use
+char *input_path=NULL;
 
 //////////////////////////////// DBUS HELPERS ////////////////////////////////
 
@@ -421,7 +423,7 @@ static uint8_t a2dp_default_bitpool(uint8_t freq, uint8_t mode) {
                     return 53;
 
                 default:
-                    fprintf (stderr, "Invalid channel mode %u", mode);
+                    fprintf (stderr, "Invalid channel mode %u\n", mode);
                     return 53;
             }
 
@@ -437,12 +439,12 @@ static uint8_t a2dp_default_bitpool(uint8_t freq, uint8_t mode) {
                     return 51;
 
                 default:
-                    fprintf (stderr, "Invalid channel mode %u", mode);
+                    fprintf (stderr, "Invalid channel mode %u\n", mode);
                     return 51;
             }
 
         default:
-            fprintf (stderr, "Invalid sampling freq %u", freq);
+            fprintf (stderr, "Invalid sampling freq %u\n", freq);
             return 53;
     }
 }
@@ -456,81 +458,98 @@ static uint8_t a2dp_default_bitpool(uint8_t freq, uint8_t mode) {
  * @param [in] bluez codec capability configuration
  *********************/
 void setup_sbc(sbc_t *sbc, a2dp_sbc_t *cap)  {
-	
+	debug_print("setup-sbc: ");
     switch (cap->frequency) {
         case BT_SBC_SAMPLING_FREQ_16000:
             sbc->frequency = SBC_FREQ_16000;
+            debug_print("16kHz ");
             break;
         case BT_SBC_SAMPLING_FREQ_32000:
             sbc->frequency = SBC_FREQ_32000;
+            debug_print("32kHz ");
             break;
         case BT_SBC_SAMPLING_FREQ_44100:
             sbc->frequency = SBC_FREQ_44100;
+            debug_print("44.1kHz ");
             break;
         case BT_SBC_SAMPLING_FREQ_48000:
             sbc->frequency = SBC_FREQ_48000;
+            debug_print("48kHz ");
             break;
         default:
-			fprintf (stderr, "No supported frequency");
+			fprintf (stderr, "No supported frequency\n");
     }
 
     switch (cap->channel_mode) {
         case BT_A2DP_CHANNEL_MODE_MONO:
             sbc->mode = SBC_MODE_MONO;
+            debug_print("Mono ");
             break;
         case BT_A2DP_CHANNEL_MODE_DUAL_CHANNEL:
             sbc->mode = SBC_MODE_DUAL_CHANNEL;
+            debug_print("Dual ");
             break;
         case BT_A2DP_CHANNEL_MODE_STEREO:
             sbc->mode = SBC_MODE_STEREO;
+            debug_print("Stereo ");
             break;
         case BT_A2DP_CHANNEL_MODE_JOINT_STEREO:
             sbc->mode = SBC_MODE_JOINT_STEREO;
+            debug_print("Joint-Stereo ");
             break;
         default:
-			fprintf (stderr, "No supported channel_mode");
+			fprintf (stderr, "No supported channel_mode\n");
     }
 
     switch (cap->allocation_method) {
         case BT_A2DP_ALLOCATION_SNR:
             sbc->allocation = SBC_AM_SNR;
+            debug_print("SNR ");
             break;
         case BT_A2DP_ALLOCATION_LOUDNESS:
             sbc->allocation = SBC_AM_LOUDNESS;
+            debug_print("Loudness ");
             break;
         default:
-			fprintf (stderr, "No supported allocation");
+			fprintf (stderr, "No supported allocation\n");
     }
 
     switch (cap->subbands) {
         case BT_A2DP_SUBBANDS_4:
             sbc->subbands = SBC_SB_4;
+            debug_print("bands=4 ");
             break;
         case BT_A2DP_SUBBANDS_8:
             sbc->subbands = SBC_SB_8;
+            debug_print("bands=8 ");
             break;
         default:
-			fprintf (stderr, "No supported subbands");
+			fprintf (stderr, "No supported subbands\n");
     }
 
     switch (cap->block_length) {
         case BT_A2DP_BLOCK_LENGTH_4:
             sbc->blocks = SBC_BLK_4;
+            debug_print("blocks=4 ");
             break;
         case BT_A2DP_BLOCK_LENGTH_8:
             sbc->blocks = SBC_BLK_8;
+            debug_print("blocks=8 ");
             break;
         case BT_A2DP_BLOCK_LENGTH_12:
             sbc->blocks = SBC_BLK_12;
+            debug_print("blocks=12 ");
             break;
         case BT_A2DP_BLOCK_LENGTH_16:
             sbc->blocks = SBC_BLK_16;
+            debug_print("blocks=16 ");
             break;
         default:
-			fprintf (stderr, "No supported block length");
+			fprintf (stderr, "No supported block length\n");
     }
 
 	sbc->bitpool = cap->max_bitpool;
+	debug_print("bitpool: %d\n",sbc->bitpool);;
 }
 
 //////////////////////////////// BLUEZ AUDIO CALLBACK HANDLER ////////////////////////////////
@@ -568,7 +587,7 @@ DBusMessage* endpoint_select_configuration (DBusMessage *msg) {
 
 	//taken from pulseaudio with modification
     memset(&config, 0, sizeof(config));
-    config.frequency = BT_SBC_SAMPLING_FREQ_44100;
+    config.frequency = preferred_frequency;
 	if (cap->channel_mode & BT_A2DP_CHANNEL_MODE_JOINT_STEREO)
 		config.channel_mode = BT_A2DP_CHANNEL_MODE_JOINT_STEREO;
 	else if (cap->channel_mode & BT_A2DP_CHANNEL_MODE_STEREO)
@@ -578,7 +597,7 @@ DBusMessage* endpoint_select_configuration (DBusMessage *msg) {
 	else if (cap->channel_mode & BT_A2DP_CHANNEL_MODE_MONO) {
 		config.channel_mode = BT_A2DP_CHANNEL_MODE_MONO;
 	} else {
-		fprintf (stderr, "No supported channel modes");
+		fprintf (stderr, "No supported channel modes\n");
 		goto fail;
 	}
 
@@ -591,7 +610,7 @@ DBusMessage* endpoint_select_configuration (DBusMessage *msg) {
     else if (cap->block_length & BT_A2DP_BLOCK_LENGTH_4)
         config.block_length = BT_A2DP_BLOCK_LENGTH_4;
     else {
-        fprintf (stderr, "No supported block lengths");
+        fprintf (stderr, "No supported block lengths\n");
         goto fail;
     }
 
@@ -600,7 +619,7 @@ DBusMessage* endpoint_select_configuration (DBusMessage *msg) {
     else if (cap->subbands & BT_A2DP_SUBBANDS_4)
         config.subbands = BT_A2DP_SUBBANDS_4;
     else {
-        fprintf (stderr, "No supported subbands");
+        fprintf (stderr, "No supported subbands\n");
         goto fail;
     }
 
@@ -909,7 +928,6 @@ void io_thread_set_command (io_thread_tcb_s *data, int command) {
  * 
  * @returns newly created thread control block
  *********************/
-void *io_thread_run(void *ptr);
 io_thread_tcb_s *create_io_thread() {
 	io_thread_tcb_s *p;
 	
@@ -954,7 +972,6 @@ void destroy_io_thread(io_thread_tcb_s *p) {
  * Encoding function is taken from pulseaudio 2.1
  * 
  * @param [in] I/O thread control block
- * @param [in] run_once global variable
  * @param [out] quit global variable (if the app should quit)
  *********************/
 void stream_bt_output(io_thread_tcb_s *data) {
@@ -962,45 +979,71 @@ void stream_bt_output(io_thread_tcb_s *data) {
 	size_t bufsize, encode_bufsize;
 	struct pollfd pollin = { 0, POLLIN, 0 }, pollout = { data->fd, POLLOUT, 0 };
 	int timeout;
+	int fd = 0;
 
 	debug_print ("write to bt\n");
 	
 	// get buffers
 	encode_bufsize = data->write_mtu;
-	encode_buf = malloc (encode_bufsize);
-	bufsize = (encode_bufsize / sbc_get_frame_length (&data->sbc)) * // max frames allowed in a packet
+	bufsize = ((encode_bufsize - sizeof(struct rtp_header) - sizeof(struct rtp_payload)) / 
+	           sbc_get_frame_length (&data->sbc)) * // max frames allowed in a packet
 	           sbc_get_codesize(&data->sbc); // ensure all of our source will fit in a single packet
+	debug_print ("bt_write mtu %d codesize %zu framelen %zu bufsize %zu encode_bufsize %zu\n", 
+		data->write_mtu, sbc_get_codesize(&data->sbc), sbc_get_frame_length(&data->sbc),
+		bufsize, encode_bufsize
+	);
+	encode_buf = malloc (encode_bufsize);
 	buf = malloc (bufsize);	
 	//debug_print ("encode_buf %d buf %d", encode_bufsize, bufsize);
-	    
+
 	// stream
+reopen:
 	while (data->command == IO_CMD_RUNNING) {
-		ssize_t readlen;
-		
-		// wait until stdin has some data
-		//debug_print ("waiting stdin\n");
-		pthread_mutex_unlock (&data->mutex);
-		timeout = poll (&pollin, 1, 1000); //delay 1s to allow others to update our state
-		pthread_mutex_lock (&data->mutex);
-		if (timeout == 0) continue;
-		if (timeout < 0) {
-			fprintf (stderr, "bt_write/stdin: %d\n", errno);
-			break;
+		ssize_t readlen, readpartial;
+
+		if (input_path && fd == 0) {
+			debug_print ("opening %s\n",input_path);
+			fd = open(input_path, O_RDONLY);
+			if (fd < 0) {
+				data->command = IO_CMD_TERMINATE;
+				fprintf(stderr, "cant open %s\n",input_path);
+				goto done;
+			}
+			pollin.fd = fd;
 		}
-		
-		// read stdin
-		readlen = read (0, buf, bufsize);
-		if (readlen == 0) { // stream closed
-			data->command = IO_CMD_TERMINATE;
-			if (run_once) quit = 1;
-			continue;
+				
+		// read stdin with buffering - need to read entire packet's worth
+		readlen = 0;
+		while (readlen < bufsize) {	
+			// wait until stdin has some data
+			pthread_mutex_unlock (&data->mutex);
+			timeout = poll (&pollin, 1, 1000); //delay 1s to allow others to update our state
+			pthread_mutex_lock (&data->mutex);
+			if (timeout == 0) continue;
+			if (timeout < 0) {
+				fprintf (stderr, "bt_write/stdin: %d\n", errno);
+				goto done;
+			}
+
+			readpartial = read (fd, buf+readlen, bufsize-readlen);
+			if (readpartial == 0) { // stream closed
+				if (!input_path) {
+					data->command = IO_CMD_TERMINATE;
+					quit = 1;
+					goto done;
+				}
+				debug_print ("closing %s\n", input_path);
+				close(fd); fd = 0; // signal to re-open
+				goto reopen;
+			}
+			if (readpartial < 0) continue;
+			readlen += readpartial;
 		}
-		if (readlen < 0) continue;
-		
+
 		// encode bluetooth
 		// all of our source is guaranteed to fit  in a single packet
 		//debug_print ("encoding\n");
-		
+
 		struct rtp_header *header;
 		struct rtp_payload *payload;
 		size_t nbytes;
@@ -1073,8 +1116,10 @@ void stream_bt_output(io_thread_tcb_s *data) {
 			write (data->fd, encode_buf, nbytes);
 		}
 	}
-	
-	// cleanup		
+
+done:
+	// cleanup
+	if (fd>0) close(fd);
 	free (buf);
 	free (encode_buf);
 }
@@ -1085,6 +1130,7 @@ void stream_bt_output(io_thread_tcb_s *data) {
  * 
  * @param [in] I/O thread control block
  *********************/
+ #define SBC_MIN_FRAME_LEN 11 // calculated from sbcinfo.c from sbc 1.3
 void stream_bt_input(io_thread_tcb_s *data) {
 	void *buf, *decode_buf;
 	size_t bufsize, decode_bufsize;
@@ -1095,11 +1141,22 @@ void stream_bt_input(io_thread_tcb_s *data) {
 	
 	// get buffers
 	bufsize = data->read_mtu;
-	buf = malloc (bufsize);
-	decode_bufsize = (bufsize / sbc_get_frame_length (&data->sbc) + 1 ) * //max frames in a packet
+	//decode_bufsize = (bufsize / sbc_get_frame_length (&data->sbc) + 1 ) * //max frames in a packet
+	//                 sbc_get_codesize(&data->sbc);
+	// We want output buffer to be able to hold entire decoded output from 
+	// a single packet, to make output process simpler. The above doesn't work 
+	// because bitpool can change on the fly and thus sbc_get_frame_length 
+	// can change; it is possible we run out of output buffer space during
+	// decoding. So we want to calculate output buffer based on *minimum*
+	// frame length - this is calculated to be 11 bytes based on sbcinfo.c
+	decode_bufsize = (bufsize / SBC_MIN_FRAME_LEN + 1 ) * //max frames in a packet
 	                 sbc_get_codesize(&data->sbc);
+	buf = malloc (bufsize);
 	decode_buf = malloc (decode_bufsize);
-	//debug_print ("codesize %d framelen %d", sbc_get_codesize(&data->sbc), sbc_get_frame_length(&data->sbc));
+	debug_print ("bt_read mtu %d codesize %zu framelen %zu bufsize %zu decode_bufsize %zu\n", 
+		data->read_mtu, sbc_get_codesize(&data->sbc), sbc_get_frame_length(&data->sbc),
+		bufsize, decode_bufsize
+	);
 	
 	// stream
 	while (data->command == IO_CMD_RUNNING) {
@@ -1127,13 +1184,13 @@ void stream_bt_input(io_thread_tcb_s *data) {
 		// decode a2dp/sbc from pulseaudio
 		//debug_print ("decoding\n");
 		void *p = buf + sizeof(struct rtp_header) + sizeof(struct rtp_payload);
+		void *d = decode_buf;		
 		size_t to_decode = readlen - sizeof(struct rtp_header) - sizeof(struct rtp_payload);
-		void *d = decode_buf;
 		size_t to_write = decode_bufsize;
 		
 		while (to_decode > 0) {
 			size_t written;
-			size_t decoded;
+			ssize_t decoded;
 
 			decoded = sbc_decode(&data->sbc,
 								 p, to_decode,
@@ -1150,8 +1207,9 @@ void stream_bt_input(io_thread_tcb_s *data) {
 			d = (uint8_t*) d + written;
 			to_write -= written;
 			//debug_print ("%zu ", decode_bufsize - to_write);
+			//debug_print ("%zu:%zu ", to_write, to_decode);
 		}
-		// debug_print ("\n");
+		//debug_print ("\n");
 		
 		// wait until stdout is ready
 		while (data->command == IO_CMD_RUNNING) {
@@ -1241,7 +1299,7 @@ int main(int argc, char** argv)
 	DBusConnection* system_bus;
 	char *bt_object;	// bluetooth device objectpath
 	io_thread_tcb_s *io_threads_table = NULL; // hashtable of io_threads
-	int msg_waiting_time = -1; //default is wait forever
+	int msg_waiting_time = 1000; //1ms, -1 = wait forever - but we want our main loop to work always
 	
 	// scratch variables
 	DBusMessage *msg, *reply;
@@ -1251,28 +1309,48 @@ int main(int argc, char** argv)
 	const struct option options[] = {
 		{"help",    no_argument, 0,  'h' },
 		{"sink",    no_argument, 0,  's' },
-		{"source",  no_argument, 0,  'o' },
-		{"run-once", no_argument, 0, 'r' },
+		{"source",  optional_argument, 0,  'o' },
+		{"rate",     required_argument, 0, 'r' },
 		{0,         0,           0,  0 }
 	};
-	int option, run_sink=0, run_source=0;
-	while ((option = getopt_long (argc, argv, "h", (const struct option *) &options, NULL)) != -1) {
+	int option, run_sink=0, run_source=0, rate=0;
+	while ((option = getopt_long (argc, argv, "hso:r:", (const struct option *) &options, NULL)) != -1) {
 		switch (option) {
 			case 'h':
-				fprintf (stderr,"Usage: a2dp-alsa [--sink|--source|--run-once] [hciX]\n");
+				fprintf (stderr,"\
+Usage: a2dp-alsa [--sink|--source[=path]|--rate=freq] [hciX]\n\
+--rate is only for --source. Only 16000, 32000, 44100 and 48000 are supported.\n");
 				return 0;
 			case 's':
 				debug_print ("run sink\n");
 				run_sink=1;
 				break;
 			case 'o':
-				debug_print ("run source\n");
+				debug_print ("run source %s\n", optarg);
+				input_path = optarg;
 				run_source=1;
 				break;
 			case 'r':
-				debug_print ("run once\n");
-				run_once=1;
-				msg_waiting_time = 1000; //1000 ms = 1 s
+				rate = atoi(optarg);
+				debug_print("rate: %d\n", rate);
+				switch (rate) {
+					case 16000:
+						preferred_frequency = BT_SBC_SAMPLING_FREQ_16000;
+						break;
+					case 32000:
+						preferred_frequency = BT_SBC_SAMPLING_FREQ_32000;
+						break;
+					case 44100:
+						preferred_frequency = BT_SBC_SAMPLING_FREQ_44100;
+						break;
+					case 48000:
+						preferred_frequency = BT_SBC_SAMPLING_FREQ_48000;
+						break;
+					default:
+						debug_print("Rate not supported.\n");
+						exit(1);
+						break;
+				}
 				break;
 		}
 	}
